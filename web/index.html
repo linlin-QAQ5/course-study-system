@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>课程学习记录系统</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: #f3f6fa; color: #243247;
+      font-family: "Microsoft YaHei", sans-serif;
+    }
+    main { max-width: 960px; margin: 36px auto; padding: 0 20px; }
+    h1 { margin-bottom: 10px; }
+    .subtitle { color: #617086; line-height: 1.8; }
+    .panel {
+      background: white; border-radius: 12px; padding: 24px;
+      margin-top: 22px; box-shadow: 0 4px 18px #21334d0a;
+    }
+    label { display: block; margin: 12px 0 7px; }
+    input, textarea {
+      width: 100%; padding: 11px; border: 1px solid #cbd5e1;
+      border-radius: 6px; font: inherit;
+    }
+    textarea { min-height: 100px; resize: vertical; }
+    button {
+      cursor: pointer; border: 0; border-radius: 6px;
+      padding: 10px 15px; background: #2563eb; color: white;
+      margin-top: 12px; margin-right: 8px;
+    }
+    button:disabled { opacity: .6; cursor: wait; }
+    .secondary { background: #52657d; }
+    .danger { background: #b94040; }
+    .record { border-top: 1px solid #e4eaf1; padding: 16px 0; }
+    .record h3 { margin: 0 0 8px; }
+    .record p { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .meta { color: #68768a; font-size: 14px; }
+    .done { color: #16805b; }
+    #message { min-height: 24px; color: #16603e; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>课程学习记录系统</h1>
+  <div class="subtitle">
+    Docker阶段小项目 · Nginx / Flask / MySQL<br>
+    张逸霖 · 202612190002
+  </div>
+
+  <section class="panel">
+    <h2>新增学习记录</h2>
+    <form id="record-form">
+      <label for="course">课程名称</label>
+      <input id="course" maxlength="100" required
+             placeholder="例如：Docker容器技术">
+      <label for="content">学习内容</label>
+      <textarea id="content" maxlength="500" required
+                placeholder="填写本次学习内容"></textarea>
+      <button id="submit-button" type="submit">保存记录</button>
+    </form>
+    <p id="message" role="status"></p>
+  </section>
+
+  <section class="panel">
+    <h2>学习记录</h2>
+    <button type="button" class="secondary" id="refresh-button">刷新列表</button>
+    <p id="summary"></p>
+    <div id="records"></div>
+  </section>
+</main>
+
+<script>
+const message = document.querySelector("#message");
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "请求失败");
+  return data;
+}
+
+function showError(error) {
+  message.style.color = "#b94040";
+  message.textContent = error.message;
+}
+
+function showSuccess(text) {
+  message.style.color = "#16603e";
+  message.textContent = text;
+}
+
+async function loadRecords() {
+  const rows = await api("/api/records");
+  const container = document.querySelector("#records");
+  container.replaceChildren();
+  const completed = rows.filter(row => row.completed).length;
+  document.querySelector("#summary").textContent =
+    `共 ${rows.length} 条记录，已完成 ${completed} 条`;
+
+  if (!rows.length) {
+    container.textContent = "暂无记录，请添加第一条学习记录。";
+    return;
+  }
+
+  for (const row of rows) {
+    const article = document.createElement("article");
+    article.className = "record";
+
+    const title = document.createElement("h3");
+    title.textContent = row.course;
+
+    const content = document.createElement("p");
+    content.textContent = row.content;
+
+    const meta = document.createElement("div");
+    meta.className = row.completed ? "meta done" : "meta";
+    meta.textContent =
+      `编号 ${row.id} · ${row.completed ? "已完成" : "待完成"} · ${row.created_at} UTC`;
+
+    const toggle = document.createElement("button");
+    toggle.textContent = row.completed ? "改为待完成" : "标记完成";
+    toggle.onclick = async () => {
+      toggle.disabled = true;
+      try {
+        await api(`/api/records/${row.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ completed: !row.completed })
+        });
+        await loadRecords();
+        showSuccess("完成状态已更新");
+      } catch (error) {
+        showError(error);
+      } finally {
+        toggle.disabled = false;
+      }
+    };
+
+    const remove = document.createElement("button");
+    remove.textContent = "删除";
+    remove.className = "danger";
+    remove.onclick = async () => {
+      if (!confirm("确定删除这条学习记录吗？")) return;
+      remove.disabled = true;
+      try {
+        await api(`/api/records/${row.id}`, { method: "DELETE" });
+        await loadRecords();
+        showSuccess("记录已删除");
+      } catch (error) {
+        showError(error);
+      } finally {
+        remove.disabled = false;
+      }
+    };
+
+    article.append(title, content, meta, toggle, remove);
+    container.append(article);
+  }
+}
+
+document.querySelector("#record-form").onsubmit = async event => {
+  event.preventDefault();
+  const button = document.querySelector("#submit-button");
+  button.disabled = true;
+  try {
+    await api("/api/records", {
+      method: "POST",
+      body: JSON.stringify({
+        course: document.querySelector("#course").value.trim(),
+        content: document.querySelector("#content").value.trim()
+      })
+    });
+    event.target.reset();
+    await loadRecords();
+    showSuccess("学习记录已保存");
+  } catch (error) {
+    showError(error);
+  } finally {
+    button.disabled = false;
+  }
+};
+
+document.querySelector("#refresh-button").onclick =
+  () => loadRecords().catch(showError);
+
+loadRecords().catch(showError);
+</script>
+</body>
+</html>

@@ -1,0 +1,77 @@
+services:
+  db:
+    image: "${MYSQL_IMAGE:-mysql:8.0}"
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?请设置数据库root密码}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-study_db}"
+      MYSQL_USER: "${MYSQL_USER:-study_user}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:?请设置应用数据库密码}"
+      TZ: UTC
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - app-net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mysql --protocol=TCP -h 127.0.0.1 -uroot
+          -p"$${MYSQL_ROOT_PASSWORD}" -D "$${MYSQL_DATABASE}"
+          -e "SELECT 1" >/dev/null 2>&1
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+
+  api:
+    image: course-study-api:v1
+    build:
+      context: ./api
+      args:
+        PYTHON_IMAGE: "${PYTHON_IMAGE:-python:3.11-slim-bookworm}"
+        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://pypi.org/simple}"
+    environment:
+      DB_HOST: db
+      DB_NAME: "${MYSQL_DATABASE:-study_db}"
+      DB_USER: "${MYSQL_USER:-study_user}"
+      DB_PASSWORD: "${MYSQL_PASSWORD}"
+    networks:
+      - app-net
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  web:
+    image: course-study-web:v1
+    build:
+      context: ./web
+      args:
+        NGINX_IMAGE: "${NGINX_IMAGE:-nginx:alpine}"
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    networks:
+      - app-net
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  app-net:
+    driver: bridge
+
+volumes:
+  db_data:
